@@ -3,9 +3,6 @@
 
 /************* Semantic Versioning***************/
 #define I2C_LIBRARY
-#define I2C_MAJOR	0
-#define I2C_MINOR	0
-#define I2C_PATCH	0
 
 /*************   Magic  Numbers   ***************/
 /*************    Enumeration     ***************/

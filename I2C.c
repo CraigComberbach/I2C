@@ -14,9 +14,7 @@ v0.0.0	2013-11-1	Craig Comberbach	Compiler: C30 v3.31	IDE: MPLABx 1.80	Tool: Rea
 #include "I2C.h"
 
 /************* Semantic Versioning***************/
-#ifndef I2C_LIBRARY
-	#error "You need to include the I2C library for this code to compile"
-#elif I2C_MAJOR != 0
+#if I2C_MAJOR != 0
 	#warning "I2C.c has had a change that loses some previously supported functionality"
 #elif I2C_MINOR != 1
 	#warning "I2C.c has new features that this code may benefit from"
