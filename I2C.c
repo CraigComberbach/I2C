@@ -32,7 +32,144 @@ v0.0.0	2013-11-1	Craig Comberbach	Compiler: C30 v3.31	IDE: MPLABx 1.80	Tool: Rea
 /************* Module Definitions ***************/
 /************* Other  Definitions ***************/
 
-int Initialize_I2C(enum I2C_Module module)
-{
+#ifdef I2C_USE_MASTER
+	int I2C_Initialize_Master(int module, int speedkHz)
+	{
+		unsigned long BRG;
+		int CON = 0;
+		int I2CEN = 1;
 
-}
+		//Calculate Baud rate
+		BRG = FOSC_HZ / 2;
+		BRG /= speedkHz * 1000;
+		BRG -= (FOSC_HZ / 2) / 10000000;
+		BRG--;
+
+		//Assign module settings
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+
+		return 1;
+	}
+
+	int I2C_Master_Write(char byte, int module)
+	{
+		//Choose a module
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+
+		return 1;
+	}
+
+	int I2C_Master_Read(int module)
+	{
+		//Choose a module
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+	}
+
+	int I2C_Master_Start(int module)
+	{}
+
+	int I2C_Master_Stop(int module)
+	{}
+
+	int I2C_Master_Repeated_Start(int module)
+	{}
+
+	int I2C_Master_Acknowledge(int ackNack, int module)
+	{
+		//Range Check
+		if((ackNack != 0) && (ackNack != 1))
+			return 0;//Only Acks and Nack allowed
+
+		//Choose a module
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+
+		return 1;
+	}
+#endif
+
+#ifdef I2C_USE_SLAVE
+	int I2C_Initialize_Slave(int module, int speedkHz)
+	{
+		unsigned long BRG;
+		int CON = 0;
+		int I2CEN = 1;
+
+		//Calculate Baud rate
+		BRG = FOSC_HZ / 2;
+		BRG /= speedkHz * 1000;
+		BRG -= (FOSC_HZ / 2) / 10000000;
+		BRG--;
+
+		//Assign module settings
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+
+		return 1;
+	}
+
+	int I2C_Slave_Write(char byte, int module)
+	{
+		//Choose a module
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+
+		return 1;
+	}
+
+	int I2C_Slave_Read(int module)
+	{
+		//Choose a module
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+	}
+
+	int I2C_Slave_Start(int module)
+	{}
+
+	int I2C_Slave_Stop(int module)
+	{}
+
+	int I2C_Slave_Repeated_Start(int module)
+	{}
+
+	int I2C_Slave_Acknowledge(int ackNack, int module)
+	{
+		//Range Check
+		if((ackNack != 0) && (ackNack != 1))
+			return 0;//Only Acks and Nack allowed
+
+		//Choose a module
+		switch(module)
+		{
+			default:
+				return 0;//I2C module doesn't exist
+		}
+
+		return 1;
+	}
+#endif
