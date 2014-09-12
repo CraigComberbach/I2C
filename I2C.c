@@ -34,5 +34,5 @@ v0.0.0	2013-11-1	Craig Comberbach	Compiler: C30 v3.31	IDE: MPLABx 1.80	Tool: Rea
 
 int Initialize_I2C(enum I2C_Module module)
 {
-
+	return 0;
 }
