@@ -19,7 +19,7 @@
 #define I2C_LIBRARY
 
 /*************   Magic  Numbers   ***************/
-#define ACK	1
+#define ACK		1
 #define NACK	0
 
 /*************    Enumeration     ***************/
@@ -34,7 +34,7 @@ enum I2C_STATES
 /*************Function  Prototypes***************/
 void I2C_Routine(uint16_t time_mS);
 void Initialize_I2C(enum I2C_Module module);
-void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST stateMachineNumber, uint16_t speed_kHz, void (*functionI2C)(enum I2C_Module));
+void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST stateMachineNumber, uint16_t speed_kHz, unsigned long delayUntil, int (*functionI2C)(enum I2C_Module));
 int8_t I2C_Busy(enum I2C_Module module);
 void I2C_Write(int8_t byte, enum I2C_Module module);
 void I2C_Start_Read(enum I2C_Module module);

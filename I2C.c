@@ -38,20 +38,20 @@ v0.0.0	2013-11-1	Craig Comberbach	Compiler: C30 v3.31	IDE: MPLABx 1.80	Tool: Rea
 /***********State Machine Definitions*************/
 static struct STATE_MACHINE
 {
-	uint8_t moduleToUse;		//The module that should be used
-	uint16_t brg;					//The value to set the Baud rate generator to
+	uint8_t moduleToUse;				//The module that should be used
+	uint16_t brg;						//The value to set the Baud rate generator to
+	uint16_t maxExpectedRunTime_mS;		//Maximum expected run time, anything beyond this is assumed to be locked up, maxes out at ~65.5 seconds
+	uint32_t delayUntil_mS;				//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
+	uint32_t delayUntilCounter_mS;		//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
 	enum I2C_STATES currentState;		//The current state
-	void (*function)(enum I2C_Module);	//The function to call in the interrupt that contains the state machine in question
-	uint32_t delayUntil_mS;		//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
+	int (*function)(enum I2C_Module);	//The function to call in the interrupt that contains the state machine in question, returns a 1 if it needs more time, a 0 if it is finished
 } stateMachine[NUMBER_OF_I2C_STATE_MACHINES];
 
 /*************  Global Variables  ***************/
 int8_t moduleLock[NUMBER_OF_I2C_MODULES];
-int8_t currentSM[NUMBER_OF_I2C_MODULES];
 
 /*************Function  Prototypes***************/
-int8_t Next_State_Machine(enum I2C_Module module, uint8_t currentSM);
-//void __attribute__((interrupt, auto_psv)) _MI2C1Interrupt(void);
+void __attribute__((interrupt, auto_psv)) _MI2C1Interrupt(void);
 
 /************* Device Definitions ***************/
 /************* Module Definitions ***************/
@@ -59,95 +59,43 @@ int8_t Next_State_Machine(enum I2C_Module module, uint8_t currentSM);
 
 void I2C_Routine(uint16_t time_mS)
 {
-	uint8_t module;
-	static int8_t born = 1;
 	int8_t loop;
 
-	//Initialize the starting state of all of the modules on the first run through
-	if(born)
-	{
-		for(loop = 0; loop < NUMBER_OF_I2C_MODULES; ++loop)
-			currentSM[loop] = Next_State_Machine(loop, NUMBER_OF_I2C_STATE_MACHINES);
-		born = 0;
-	}
-
-	//Update the time on any delayed state machines
+	//Update Countdown Timers
 	for(loop = 0; loop < NUMBER_OF_I2C_STATE_MACHINES; ++loop)
 	{
 		if(stateMachine[loop].currentState == I2C_DELAYED)
 		{
-			if(stateMachine[loop].delayUntil_mS >= time_mS)
-				stateMachine[loop].delayUntil_mS -= time_mS;//Decrement it
-			else
+			stateMachine[loop].delayUntilCounter_mS += time_mS;//Increment it
+			if(stateMachine[loop].delayUntilCounter_mS >= stateMachine[loop].delayUntil_mS)
 			{
 				//Undelay it
-				stateMachine[loop].delayUntil_mS = 0;
+				stateMachine[loop].delayUntilCounter_mS = 0;
 				stateMachine[loop].currentState = I2C_RUNNING;
 			}
 		}
 	}
 
-	//Start a state machine going if the resources are available on each module
-	for(module = 0; module < NUMBER_OF_I2C_MODULES; ++module)
+	//Check if any statemachines need to run
+	for(loop = 0; loop < NUMBER_OF_I2C_STATE_MACHINES; ++loop)
 	{
-		if(moduleLock[module] == MODULE_IS_IN_USE)
-			continue;
-		else
+		if(stateMachine[loop].currentState == I2C_RUNNING)
 		{
-			//Advance to the next available statemachine
-			currentSM[module] = Next_State_Machine(module, currentSM[module]);
-
-			//Setup the specific baud rate for this device
-			I2C1BRG = stateMachine[currentSM[module]].brg;
-
-			//Start the state machine running (the interrupts will take care of the rest
-			if(stateMachine[currentSM[module]].currentState == I2C_RUNNING)
+			//Is the required module locked?
+			if(moduleLock[stateMachine[loop].moduleToUse] == MODULE_IS_IN_USE)
+				continue;
+			else
 			{
-				stateMachine[currentSM[module]].function(module);
-				moduleLock[module] = MODULE_IS_IN_USE;
+				moduleLock[stateMachine[loop].moduleToUse] = MODULE_IS_IN_USE;
+				stateMachine[loop].function(stateMachine[loop].moduleToUse);
 			}
 		}
 	}
 
-
-
-
-
-
-	//For test purposes only!
-	stateMachine[0].currentState = I2C_RUNNING;
-
-
-
-
-
-
 	return;
 }
 
-int8_t Next_State_Machine(enum I2C_Module module, uint8_t currentSM)
-{
-	int16_t loop;
-	int16_t testSM;
-//	wishey washey timey wimey, needs a better rewrite
-	//Error detection (Advance to the last legal state machine so that I can increment to the first (0) state machine
-	if(currentSM >= NUMBER_OF_I2C_STATE_MACHINES)
-		currentSM = NUMBER_OF_I2C_STATE_MACHINES -1;
-
-	for(loop = 0; loop == NUMBER_OF_I2C_STATE_MACHINES; ++loop)
-	{
-		testSM = currentSM + loop;
-		if(testSM >= NUMBER_OF_I2C_STATE_MACHINES)
-			testSM -= NUMBER_OF_I2C_STATE_MACHINES;
-
-		if((stateMachine[testSM].moduleToUse == module) && (stateMachine[testSM].currentState == I2C_RUNNING))
-			return testSM;
-	}
-
-	return currentSM;
-}
-
-void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST stateMachineNumber, uint16_t speed_kHz, void (*functionI2C)(enum I2C_Module))
+void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST stateMachineNumber, uint16_t speed_kHz, unsigned long delayUntil, int (*functionI2C)(enum I2C_Module))
 {
 	uint16_t baudRate;
 
@@ -165,13 +113,13 @@ void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST
 	stateMachine[stateMachineNumber].moduleToUse = module;
 
 	//Initialize the current state to the begin in
-	stateMachine[stateMachineNumber].currentState = I2C_STOPPED;
+	stateMachine[stateMachineNumber].currentState = I2C_DELAYED;
 
 	//Set the function to be called during interrupts
 	stateMachine[stateMachineNumber].function = functionI2C;
 
 	//Zero the delay
-	stateMachine[stateMachineNumber].delayUntil_mS = 0;
+	stateMachine[stateMachineNumber].delayUntil_mS = delayUntil;
 
 	return;
 }
@@ -367,19 +315,25 @@ void I2C_Enable_Module(enum I2C_Module module)
 	return;
 }
 
-//void __attribute__((interrupt, auto_psv)) _MI2C1Interrupt(void)
-//{
-//	//The MI2CxIF interrupt is generated on completion of the following master message events:
-//	//? Start condition
-//	//? Stop condition
-//	//? Data transfer byte transmitted/received
-//	//? Acknowledge transmit
-//	//? Repeated Start
-//	//? Detection of a bus collision event
-//	IFS1bits.MI2C1IF = 0;	//Clear Interrupt Flag
-//
-//	//TODO - I need some way of detecting which module just completed! Check if there is a flag set for each module
-////	if(*stateMachine[currentSM[0]].function != (void*)0)
-////		stateMachine[currentSM[0]].function(0);
-//	return;
-//}
+void __attribute__((interrupt, auto_psv)) _MI2C1Interrupt(void)
+{
+	//The MI2CxIF interrupt is generated on completion of the following master message events:
+	//? Start condition
+	//? Stop condition
+	//? Data transfer byte transmitted/received
+	//? Acknowledge transmit
+	//? Repeated Start
+	//? Detection of a bus collision event
+	IFS1bits.MI2C1IF = 0;	//Clear Interrupt Flag
+
+	//TODO - I need some way of detecting which module just completed! Check if there is a flag set for each module
+	if(*stateMachine[0].function != (void*)0)
+	{
+		if(stateMachine[0].function(0) == 0)
+		{
+			moduleLock[I2C1_MODULE] = MODULE_IS_FREE;
+			stateMachine[0].currentState = I2C_DELAYED;
+		}
+	}
+	return;
+}
