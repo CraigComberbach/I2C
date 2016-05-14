@@ -21,6 +21,8 @@
 /*************   Magic  Numbers   ***************/
 #define ACK		1
 #define NACK	0
+#define RELEASE_I2C_MODULE			0
+#define DO_NOT_RELEASE_I2C_MODULE	1
 
 /*************    Enumeration     ***************/
 enum I2C_STATES

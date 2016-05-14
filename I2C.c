@@ -32,7 +32,7 @@ v0.0.0	2013-11-1	Craig Comberbach	Compiler: C30 v3.31	IDE: MPLABx 1.80	Tool: Rea
 
 /*************   Magic  Numbers   ***************/
 #define MODULE_IS_IN_USE	1
-#define MODULE_IS_FREE		0
+#define MODULE_IS_FREE		-1
 
 /*************    Enumeration     ***************/
 /***********State Machine Definitions*************/
@@ -42,7 +42,7 @@ static struct STATE_MACHINE
 	uint16_t brg;						//The value to set the Baud rate generator to
 	uint16_t maxExpectedRunTime_mS;		//Maximum expected run time, anything beyond this is assumed to be locked up, maxes out at ~65.5 seconds
 	uint32_t delayUntil_mS;				//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
-	uint32_t delayUntilCounter_mS;		//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
+	uint32_t delayUntilCounter_mS;		//Counter for delay
 	enum I2C_STATES currentState;		//The current state
 	int (*function)(enum I2C_Module);	//The function to call in the interrupt that contains the state machine in question, returns a 1 if it needs more time, a 0 if it is finished
 } stateMachine[NUMBER_OF_I2C_STATE_MACHINES];
@@ -82,11 +82,12 @@ void I2C_Routine(uint16_t time_mS)
 		if(stateMachine[loop].currentState == I2C_RUNNING)
 		{
 			//Is the required module locked?
-			if(moduleLock[stateMachine[loop].moduleToUse] == MODULE_IS_IN_USE)
+			if(moduleLock[stateMachine[loop].moduleToUse] != MODULE_IS_FREE)
 				continue;
 			else
 			{
-				moduleLock[stateMachine[loop].moduleToUse] = MODULE_IS_IN_USE;
+				moduleLock[stateMachine[loop].moduleToUse] = loop;
+				I2C1BRG = stateMachine[loop].brg;
 				stateMachine[loop].function(stateMachine[loop].moduleToUse);
 			}
 		}
@@ -327,12 +328,12 @@ void __attribute__((interrupt, auto_psv)) _MI2C1Interrupt(void)
 	IFS1bits.MI2C1IF = 0;	//Clear Interrupt Flag
 
 	//TODO - I need some way of detecting which module just completed! Check if there is a flag set for each module
-	if(*stateMachine[0].function != (void*)0)
+	if(*stateMachine[moduleLock[I2C1_MODULE]].function != (void*)0)
 	{
-		if(stateMachine[0].function(0) == 0)
+		if(stateMachine[moduleLock[I2C1_MODULE]].function(I2C1_MODULE) == RELEASE_I2C_MODULE)
 		{
+			stateMachine[moduleLock[I2C1_MODULE]].currentState = I2C_DELAYED;
 			moduleLock[I2C1_MODULE] = MODULE_IS_FREE;
-			stateMachine[0].currentState = I2C_DELAYED;
 		}
 	}
 	return;
