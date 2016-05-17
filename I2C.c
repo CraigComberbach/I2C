@@ -1,15 +1,14 @@
-//I need some way of detecting which module just completed while in the interrupt
-//Write the code that allows the state machine to resume after contention arbitration
-//Locking currently is irrevesrable!!
 /**************************************************************************************************
 Target Hardware:		PIC24F...
-Chip resources used:
-Code assumptions:
+Chip resources used:	I2C modules
+Code assumptions:		Error handling is done by external code
+						Only one I2C module is used
 Purpose:				Allow access to interrupt/polling driven I2C resources
 Notes:
 
 Version History:
-v0.0.0	2013-11-1	Craig Comberbach	Compiler: C30 v3.31	IDE: MPLABx 1.80	Tool: RealICE	Computer: Intel Xeon CPU 3.07 GHz, 6 GB RAM, Windows 7 64 bit Professional SP1
+v0.1.0	2016-05-16	Craig Comberbach	Compiler: XC16 v1.11	IDE: MPLABx 3.30	Tool: ICD3		Computer: Intel Core2 Quad CPU 2.40 GHz, 5 GB RAM, Windows 10 Home 64-bit
+v0.0.0	2013-11-01	Craig Comberbach	Compiler: C30 v3.31		IDE: MPLABx 1.80	Tool: RealICE	Computer: Intel Xeon CPU 3.07 GHz, 6 GB RAM, Windows 7 64 bit Professional SP1
 	First version
 **************************************************************************************************/
 /*************    Header Files    ***************/
@@ -31,20 +30,18 @@ v0.0.0	2013-11-1	Craig Comberbach	Compiler: C30 v3.31	IDE: MPLABx 1.80	Tool: Rea
 #endif
 
 /*************   Magic  Numbers   ***************/
-#define MODULE_IS_IN_USE	1
 #define MODULE_IS_FREE		-1
 
 /*************    Enumeration     ***************/
 /***********State Machine Definitions*************/
 static struct STATE_MACHINE
 {
-	uint8_t moduleToUse;				//The module that should be used
-	uint16_t brg;						//The value to set the Baud rate generator to
-	uint16_t maxExpectedRunTime_mS;		//Maximum expected run time, anything beyond this is assumed to be locked up, maxes out at ~65.5 seconds
-	uint32_t delayUntil_mS;				//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
-	uint32_t delayUntilCounter_mS;		//Counter for delay
-	enum I2C_STATES currentState;		//The current state
-	int (*function)(enum I2C_Module);	//The function to call in the interrupt that contains the state machine in question, returns a 1 if it needs more time, a 0 if it is finished
+	uint8_t moduleToUse;					//The module that should be used
+	uint16_t brg;							//The value to set the Baud rate generator to
+	uint32_t delayUntil_mS;					//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
+	uint32_t delayUntilCounter_mS;			//Counter for delay
+	enum I2C_STATES currentState;			//The current state
+	int (*function)(enum I2C_Module);		//The function to call in the interrupt that contains the state machine in question, returns a 1 if it needs more time, a 0 if it is finished
 } stateMachine[NUMBER_OF_I2C_STATE_MACHINES];
 
 /*************  Global Variables  ***************/
@@ -137,8 +134,8 @@ void Initialize_I2C(enum I2C_Module module)
 	//I2C1STAT			= ;
 
 	//Setup Interrupts
-	IFS1bits.MI2C1IF = 0;	//0 = Interrupt request has not occurred
-	IEC1bits.MI2C1IE = 1;	//1 = Interrupt request is enabled
+	IFS1bits.MI2C1IF = 0;		//0 = Interrupt request has not occurred
+	IEC1bits.MI2C1IE = 1;		//1 = Interrupt request is enabled
 
 	//I2C Control Register
 	I2C1CONbits.SMEN	= 0;	//0 = Disables the SMBus input thresholds
@@ -319,12 +316,12 @@ void I2C_Enable_Module(enum I2C_Module module)
 void __attribute__((interrupt, auto_psv)) _MI2C1Interrupt(void)
 {
 	//The MI2CxIF interrupt is generated on completion of the following master message events:
-	//? Start condition
-	//? Stop condition
-	//? Data transfer byte transmitted/received
-	//? Acknowledge transmit
-	//? Repeated Start
-	//? Detection of a bus collision event
+	//Start condition
+	//Stop condition
+	//Data transfer byte transmitted/received
+	//Acknowledge transmit
+	//Repeated Start
+	//Detection of a bus collision event
 	IFS1bits.MI2C1IF = 0;	//Clear Interrupt Flag
 
 	//TODO - I need some way of detecting which module just completed! Check if there is a flag set for each module
