@@ -3,11 +3,52 @@ Target Hardware:		PIC24F...
 Chip resources used:	I2C modules
 Code assumptions:		Error handling is done by external code
 						Only one I2C module is used
+						All statemachines are declared in the config file (enum I2C_STATE_MACHINE_LIST) and not created on the fly
 Purpose:				Allow access to interrupt/polling driven I2C resources
-Notes:
+Notes:					Multi-module support is planned for a future release
+						Support to arbitrarily start/stop a statemachine instead of just delaying it is planned for a future release
 
+  +-----------+                                        +-----------+                 +-----------------+
+  |   Start   |                                        |    End    |                 |      Start      |
+  |I2C_Handler|                                        |I2C_Handler<---------+       |    Interrupt    |
+  +-----+-----+                                        +-----------+         |       +--------+--------+
+        |                                                                    |                |
+        |    +---------------+                 +-------------------+         |       +--------v--------+
+             |               |                 |                   |         |       |    Run State    |
+        |    V               |Yes              V                   |Yes      |       |     Machine     |
++-------+--------+     +----------+    +----------------+    +----------+    |       +--------+--------+
+|  Is the State  | Yes |Next State| No |  Is the State  | No |Next State| No |                |
+|Machine Stopped?+---->+ Machine? +--->+Machine Running?+--->+ Machine? +----+       +--------v--------+
++----------------+     +--^----^--+    +----------------+    +--^----^--+         No |  State Machine  |
+        |No               |    |               |Yes             |    |          +----+    Finished?    |
+        v                 |    |               v                |    |          |    +-----------------+
++-------+--------+        |    |       +-------+--------+       |    |          |             |Yes
+|Increment Timer |        |    |       | Is the Module  |  Yes  |    |          |    +--------v--------+
++-------+--------+        |    |       |    Locked?     +-------+    |          |    |Set State Machine|
+        |                 |    |       +-------+--------+            |          |    |   to Delayed    |
+        V                 |    |               |                     |          |    +--------+--------+
++----------------+        |    |               v                     |          |             |
+|Interval met or |  No    |    |       +-------+--------+    +-------+--+       |    +--------v--------+
+|   exceeded?    +--------+    |       |   Lock Module  |    |   Run    |       |    | Release Module  |
++----------------+             |       +-------+--------+    | Function |       |    +--------+--------+
+        |Yes                   |               |             +-----^----+       |             |
+        V                      |               v                   |            |    +--------v--------+
++---------------+              |       +-------+--------+          |            +---->  End Interrupt  |
+|Undelay Module +--------------+       |  Set Baudrate  |          |                 +-----------------+
++---------------+                      |    Generator   +----------+            
+                                       +----------------+
+
+ 
 Version History:
+v1.0.0	2016-05-16	Craig Comberbach	Compiler: XC16 v1.11	IDE: MPLABx 3.30	Tool: ICD3		Computer: Intel Core2 Quad CPU 2.40 GHz, 5 GB RAM, Windows 10 Home 64-bit
+	Initialize_I2C() function no longer takes an argument
+	Fixed syncing issue with multiple statemachines
+	Removed code that was only used in standalone independent mode (Current status, etc)
+	Cleaned up Contention Arbitration function and included the exact text from the standard for reference
+	Refactored code
+	Finished documenting in detail all of the functions
 v0.1.0	2016-05-16	Craig Comberbach	Compiler: XC16 v1.11	IDE: MPLABx 3.30	Tool: ICD3		Computer: Intel Core2 Quad CPU 2.40 GHz, 5 GB RAM, Windows 10 Home 64-bit
+	Supports automatic control of a single module. Multiple scheduled statmachines can run at different frequencies as required
 v0.0.0	2013-11-01	Craig Comberbach	Compiler: C30 v3.31		IDE: MPLABx 1.80	Tool: RealICE	Computer: Intel Xeon CPU 3.07 GHz, 6 GB RAM, Windows 7 64 bit Professional SP1
 	First version
 **************************************************************************************************/
@@ -16,9 +57,9 @@ v0.0.0	2013-11-01	Craig Comberbach	Compiler: C30 v3.31		IDE: MPLABx 1.80	Tool: R
 #include "I2C.h"
 
 /************* Semantic Versioning***************/
-#if I2C_MAJOR != 0
+#if I2C_MAJOR != 1
 	#error "I2C.c has had a change that loses some previously supported functionality"
-#elif I2C_MINOR != 1
+#elif I2C_MINOR != 0
 	#error "I2C.c has new features that this code may benefit from"
 #elif I2C_PATCH != 0
 	#error "I2C.c has had a bug fix, you should check to see that we weren't relying on a bug for functionality"
@@ -38,8 +79,8 @@ static struct STATE_MACHINE
 {
 	uint8_t moduleToUse;					//The module that should be used
 	uint16_t brg;							//The value to set the Baud rate generator to
-	uint32_t delayUntil_mS;					//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
-	uint32_t delayUntilCounter_mS;			//Counter for delay
+	uint32_t callInterval_mS;				//Delay the call for n milliseconds, maxes out at almost 8 years 2 months
+	uint32_t callIntervalCounter_mS;		//Counter for delay
 	enum I2C_STATES currentState;			//The current state
 	int (*function)(enum I2C_Module);		//The function to call in the interrupt that contains the state machine in question, returns a 1 if it needs more time, a 0 if it is finished
 } stateMachine[NUMBER_OF_I2C_STATE_MACHINES];
@@ -54,20 +95,20 @@ void __attribute__((interrupt, auto_psv)) _MI2C1Interrupt(void);
 /************* Module Definitions ***************/
 /************* Other  Definitions ***************/
 
-void I2C_Routine(uint16_t time_mS)
+void I2C_Handler(uint16_t time_mS)
 {
 	int8_t loop;
 
 	//Update Countdown Timers
 	for(loop = 0; loop < NUMBER_OF_I2C_STATE_MACHINES; ++loop)
 	{
-		if(stateMachine[loop].currentState == I2C_DELAYED)
+		if(stateMachine[loop].currentState != I2C_STOPPED)
 		{
-			stateMachine[loop].delayUntilCounter_mS += time_mS;//Increment it
-			if(stateMachine[loop].delayUntilCounter_mS >= stateMachine[loop].delayUntil_mS)
+			stateMachine[loop].callIntervalCounter_mS += time_mS;//Increment it
+			if(stateMachine[loop].callIntervalCounter_mS >= stateMachine[loop].callInterval_mS)
 			{
 				//Undelay it
-				stateMachine[loop].delayUntilCounter_mS = 0;
+				stateMachine[loop].callIntervalCounter_mS = 0;
 				stateMachine[loop].currentState = I2C_RUNNING;
 			}
 		}
@@ -93,7 +134,7 @@ void I2C_Routine(uint16_t time_mS)
 	return;
 }
 
-void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST stateMachineNumber, uint16_t speed_kHz, unsigned long delayUntil, int (*functionI2C)(enum I2C_Module))
+void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST stateMachineNumber, uint16_t speed_kHz, unsigned long callInterval_mS, int (*functionI2C)(enum I2C_Module))
 {
 	uint16_t baudRate;
 
@@ -117,13 +158,15 @@ void Setup_I2C_State_Machine(enum I2C_Module module, enum I2C_STATE_MACHINE_LIST
 	stateMachine[stateMachineNumber].function = functionI2C;
 
 	//Zero the delay
-	stateMachine[stateMachineNumber].delayUntil_mS = delayUntil;
+	stateMachine[stateMachineNumber].callInterval_mS = callInterval_mS;
 
 	return;
 }
 
-void Initialize_I2C(enum I2C_Module module)
+void Initialize_I2C(void)
 {
+	int8_t loop;
+
 	//Pad Configuration Control Register
 	//PADCFG1			= ;
 
@@ -147,79 +190,42 @@ void Initialize_I2C(enum I2C_Module module)
 	I2C1CONbits.I2CEN	= 1;	//1 = Enables the I2C1 module and configures the SDA1 and SCL1 pins as serial port pins
 
 	//Initialize the lock
-	moduleLock[module] = MODULE_IS_FREE;
+	for(loop = 0; loop < NUMBER_OF_I2C_MODULES; ++loop)
+		moduleLock[loop] = MODULE_IS_FREE;
 
 	return;
-}
-
-int8_t I2C_Busy(enum I2C_Module module)
-{
-	int8_t status = 0;
-
-	if(I2C1CONbits.ACKEN)
-		status += 1;//Ack
-	if(I2C1CONbits.SEN)
-		status += 2;//Start
-	if(I2C1CONbits.RSEN)
-		status += 4;//Repeated Start
-	if(I2C1CONbits.PEN)
-		status += 8;//Stop
-	if(I2C1CONbits.RCEN)
-		status += 16;//Receive
-	if(I2C1STATbits.TRSTAT)
-		status += 32;//Transmit
-
-	return status;//0 indicates that the module isn't busy
 }
 
 void I2C_Contention_Arbitration(enum I2C_Module module)
 {
-	//This is based off of section 3.1.16 Bus clear of the Rev.5 of UM10204 (I2C-bus specification and user manual)
-	static int8_t state[NUMBER_OF_I2C_MODULES];
-	static int8_t born = 1;
-	int8_t loop;
+	//3.1.16 Bus clear of the Rev.5 of UM10204 (I2C-bus specification and user manual)
+	//In the unlikely event where the clock (SCL) is stuck LOW, the preferential procedure is to
+	//reset the bus using the HW reset signal if your I2C devices have HW reset inputs. If the
+	//I2C devices do not have HW reset inputs, cycle power to the devices to activate the
+	//mandatory internal Power-On Reset (POR) circuit.
+	//If the data line (SDA) is stuck LOW, the master should send nine clock pulses. The device
+	//that held the bus LOW should release it sometime within those nine clocks. If not, then
+	//use the HW reset or cycle power to clear the bus
 
-	//Initialize the starting state of all of the modules on the first run through
-	if(born)
-	{
-		for(loop = 0; loop < NUMBER_OF_I2C_MODULES; ++loop)
-			state[loop] = 0;
-		born = 0;
-	}
-
-	//Go through the contention arbitration of the module
-	switch(state[module])
-	{
-		case 0:
-			//Send 9 clock signals (8 data + 1 ACK) with the data line held high
-			I2C_Write(0xFF, module);
-			break;
-		case 1:
-			//TODO - Write the code that allows this to resume
-			break;
-		default:
-			state[module] = 0;
-	}
-
-	//Advance the state for when we get back here
-	state[module]++;
+	//Send 9 clock signals (8 data + 1 ACK) with the data line held high
+	I2C_Transmit(0xFF, module);
 
 	return;
 }
 
-void I2C_Write(int8_t byte, enum I2C_Module module)
+void I2C_Transmit(int8_t byte, enum I2C_Module module)
 {
 	I2C1TRN = byte;
 	return;
 }
 
-void I2C_Start_Read(enum I2C_Module module)
+void I2C_Start_Receive(enum I2C_Module module)
 {
 	I2C1CONbits.RCEN = 1;//Enable Receive mode, this register is cleared in hardware when done
 	return;
 }
 
-int8_t I2C_Finish_Read(enum I2C_Module module)
+int8_t I2C_Finish_Receive(enum I2C_Module module)
 {
 	return I2C1RCV;//Return Result
 }
@@ -242,7 +248,7 @@ void I2C_Stop(enum I2C_Module module)
 	return;
 }
 
-int8_t I2C_Slave_Acknowledge(enum I2C_Module module)
+int8_t I2C_Check_If_Slave_Acknowledged(enum I2C_Module module)
 {
 	return (!I2C1STATbits.ACKSTAT);
 }
@@ -259,46 +265,6 @@ void I2C_Nack(enum I2C_Module module)
 	I2C1CONbits.ACKDT = 1;//Set for NACK
 	I2C1CONbits.ACKEN = 1;//Perform Acknowledge Sequence
 	return;
-}
-
-int8_t I2C_Status_RX_TX(enum I2C_Module module)
-{
-	int8_t status = 0;
-
-	//Transmit buffer full
-	if(I2C1STATbits.TBF)
-		status += 1;
-
-	//Receive buffer full
-	if(I2C1STATbits.RBF)
-		status += 2;
-
-	return status;
-}
-
-int8_t I2C_Error_Detected(enum I2C_Module module)
-{
-	int8_t status = 0;
-
-	if(I2C1STATbits.BCL)
-	{
-		I2C1STATbits.BCL = 0;
-		status += 1;//Master bus collision detected
-	}
-
-	if(I2C1STATbits.IWCOL)
-	{
-		I2C1STATbits.IWCOL = 0;
-		status += 2;//Write collision detected
-	}
-
-	if(I2C1STATbits.I2COV)
-	{
-		I2C1STATbits.I2COV = 0;
-		status += 4;//Receive Overflow detected
-	}
-
-	return status;
 }
 
 void I2C_Disable_Module(enum I2C_Module module)
