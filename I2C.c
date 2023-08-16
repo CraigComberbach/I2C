@@ -196,7 +196,7 @@ void Initialize_I2C(void)
 	return;
 }
 
-void I2C_Contention_Arbitration(enum I2C_Module module)
+void I2C_Bus_Clear(enum I2C_Module module)
 {
 	//3.1.16 Bus clear of the Rev.5 of UM10204 (I2C-bus specification and user manual)
 	//In the unlikely event where the clock (SCL) is stuck LOW, the preferential procedure is to

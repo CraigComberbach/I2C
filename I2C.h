@@ -144,7 +144,7 @@ void I2C_Enable_Module(enum I2C_Module module);
  * In the event of a lockup (multi-master, unresponsive slave, etc) this will force all lines to be released
  * @param module The name of the module that is to be used for this statemachine, use enum I2C_Module
  */
-void I2C_Contention_Arbitration(enum I2C_Module module);
+void I2C_Bus_Clear(enum I2C_Module module);
 
 #endif	/* I2C_H */
 
